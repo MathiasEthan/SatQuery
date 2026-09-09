@@ -14,7 +14,6 @@ from skimage import measure
 from model.model_encoder_att import Encoder, AttentiveEncoder
 from model.model_decoder import DecoderTransformer
 from utils_tool.utils import *
-from imageio.v2 import imread
 
 
 # compute_change_map(path_A, path_B)函数: 生成一个掩膜mask用来表示两个图像之间的变化区域
@@ -51,20 +50,21 @@ class Change_Perception(object):
 
         script_path = os.path.abspath(__file__)
         script_dir = os.path.dirname(script_path)
+        parent_dir = os.path.dirname(script_dir)
         print(script_dir)
         parser = argparse.ArgumentParser(description='Remote_Sensing_Image_Change_Interpretation')
 
-        parser.add_argument('--data_folder', default='D:\Dataset\Caption\change_caption\Levir-MCI-dataset\images',
+        parser.add_argument('--data_folder', default='data/',
                             help='folder with data files')
-        parser.add_argument('--list_path', default='F:\LCY\Change_Agent\Change-Agent-git\Multi_change\data\LEVIR_MCI/',
+        parser.add_argument('--list_path', default=os.path.join(script_dir, 'data', 'LEVIR_MCI') + '/',
                             help='path of the data lists')
         parser.add_argument('--vocab_file', default='vocab', help='path of the data lists')
         parser.add_argument('--max_length', type=int, default=41, help='path of the data lists')
 
         # inference
         parser.add_argument('--gpu_id', type=int, default=0, help='gpu id in the training.')
-        parser.add_argument('--checkpoint', default='./models_ckpt/MCI_model.pth',help='path to checkpoint')
-        parser.add_argument('--result_path', default="./predict_result/",
+        parser.add_argument('--checkpoint', default=os.path.join(parent_dir, 'models_ckpt', 'MCI_model.pth'),help='path to checkpoint')
+        parser.add_argument('--result_path', default=os.path.join(script_dir, 'predict_result') + '/',
                             help='path to save the result of masks and captions')
 
         # backbone parameters
@@ -81,7 +81,7 @@ class Change_Perception(object):
         parser.add_argument('--decoder_n_layers', type=int, default=1)
         parser.add_argument('--feature_dim', type=int, default=512, help='embedding dimension')
 
-        args = parser.parse_args()
+        args, _ = parser.parse_known_args()
 
         return args
 
@@ -122,8 +122,8 @@ class Change_Perception(object):
 
     def preprocess(self, path_A, path_B):
 
-        imgA = imread(path_A)
-        imgB = imread(path_B)
+        imgA = load_image(path_A)
+        imgB = load_image(path_B)
         imgA = np.asarray(imgA, np.float32)
         imgB = np.asarray(imgB, np.float32)
 
@@ -165,7 +165,7 @@ class Change_Perception(object):
         print('change captioning:', caption)
         return caption
 
-    def change_detection(self, path_A, path_B, savepath_mask):
+    def change_detection(self, path_A, path_B, savepath_mask=None):
         print('model_infer_change_detection: start')
         imgA, imgB = self.preprocess(path_A, path_B)
         # Move to GPU, if available
@@ -178,16 +178,47 @@ class Change_Perception(object):
         pred_seg = np.argmax(pred_seg, axis=1)
         # 保存图片
         pred = pred_seg[0].astype(np.uint8)
-        pred_rgb = np.zeros((pred.shape[0], pred.shape[1], 3), dtype=np.uint8)
-        pred_rgb[pred == 1] = [0, 255, 255]
-        pred_rgb[pred == 2] = [0, 0, 255]
-
-        cv2.imwrite(savepath_mask, pred_rgb)
-        print('model_infer: mask saved in', savepath_mask)
+        
+        if savepath_mask:
+            pred_rgb = np.zeros((pred.shape[0], pred.shape[1], 3), dtype=np.uint8)
+            pred_rgb[pred == 1] = [0, 255, 255]
+            pred_rgb[pred == 2] = [0, 0, 255]
+            cv2.imwrite(savepath_mask, pred_rgb)
+            print('model_infer: mask saved in', savepath_mask)
 
         print('model_infer_change_detection: end')
         return pred # (256,256,3)
         # return 'change detection successfully. '
+
+
+    def analyze_changes(self, path_A, path_B):
+        caption = self.generate_change_caption(path_A, path_B).lower()
+        mask = self.change_detection(path_A, path_B)
+        
+        changes = []
+        for obj_idx, obj_name in [(1, 'road'), (2, 'building')]:
+            mask_cp = 0 * mask.copy()
+            mask_cp[mask == obj_idx] = 255
+            lbl = measure.label(mask_cp, connectivity=2)
+            props = measure.regionprops(lbl)
+            for prop in props:
+                if prop.area > 5:
+                    x1, y1, x2, y2 = prop.bbox[1], prop.bbox[0], prop.bbox[3], prop.bbox[2]
+                    prior = "area"
+                    if "forest" in caption: prior = "forest"
+                    elif "bare" in caption: prior = "bare land"
+                    elif "grass" in caption: prior = "grass"
+                    elif "water" in caption: prior = "water"
+                    elif "farmland" in caption: prior = "farmland"
+                    
+                    changes.append(f"({prior} at ({x1}, {y1}, {x2}, {y2}) turned to {obj_name})")
+        
+        result = ", ".join(changes)
+        if not result:
+            result = "No changes detected."
+        
+        print("Detailed changes:", result)
+        return result
 
     def compute_object_num(self, changed_mask, object):
         print("compute num start")
@@ -227,15 +258,15 @@ class Change_Perception(object):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Remote_Sensing_Image_Change_Interpretation')
-    parser.add_argument('--imgA_path', default=r'F:/LCY/Change_Agent/Multi_change/predict_result/test_000004_A.png')
-    parser.add_argument('--imgB_path', default=r'F:/LCY/Change_Agent/Multi_change/predict_result/test_000004_B.png')
-    parser.add_argument('--mask_save_path', default=r'./CDmask.png')
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    parser.add_argument('--imgA_path', required=True, help='Path to pre-phase image')
+    parser.add_argument('--imgB_path', required=True, help='Path to post-phase image')
+    parser.add_argument('--mask_save_path', default=os.path.join(script_dir, 'CDmask.png'))
 
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
 
     imgA_path = args.imgA_path
     imgB_path = args.imgB_path
 
     Change_Perception = Change_Perception()
-    Change_Perception.generate_change_caption(imgA_path, imgB_path)
-    Change_Perception.change_detection(imgA_path, imgB_path, args.mask_save_path)
+    Change_Perception.analyze_changes(imgA_path, imgB_path)

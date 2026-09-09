@@ -4,9 +4,10 @@ from setuptools import find_packages, setup
 
 def get_version():
     version_file = 'lagent/version.py'
+    env = {}
     with open(version_file, encoding='utf-8') as f:
-        exec(compile(f.read(), version_file, 'exec'))
-    return locals()['__version__']
+        exec(compile(f.read(), version_file, 'exec'), env)
+    return env['__version__']
 
 
 def parse_requirements(fname='requirements.txt', with_version=True):
