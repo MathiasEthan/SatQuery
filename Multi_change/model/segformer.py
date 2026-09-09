@@ -1,12 +1,15 @@
 import os
-
-from mmseg.utils import get_root_logger
-from mmcv.runner import load_checkpoint
 from functools import partial
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 import math
 import torch
 from torch import nn
+
+def get_root_logger():
+    return None
+
+def load_checkpoint(*args, **kwargs):
+    pass
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
