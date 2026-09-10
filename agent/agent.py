@@ -8,6 +8,59 @@ from langchain.tools import tool
 from typing import Literal
 import os
 import requests
+import requests
+from PIL import Image, ImageDraw
+import re
+
+
+def parse_bboxes(raw_text: str, image_width: int, image_height: int):
+    boxes = []
+    entity_matches = re.findall(
+        r"<p>(.*?)</p>(.*?)(?=(?:<p>|$))", raw_text, flags=re.DOTALL
+    )
+
+    if entity_matches:
+        for label, bbox_part in entity_matches:
+            for block in re.findall(r"\{<[^}]+>\}", bbox_part):
+                integers = [int(x) for x in re.findall(r"-?\d+", block)]
+                if len(integers) >= 4:
+                    x0, y0, x1, y1 = integers[:4]
+                    angle = integers[4] if len(integers) > 4 else 0
+                    xmin = min((x0 / 1000.0) * image_width, (x1 / 1000.0) * image_width)
+                    xmax = max((x0 / 1000.0) * image_width, (x1 / 1000.0) * image_width)
+                    ymin = min(
+                        (y0 / 1000.0) * image_height, (y1 / 1000.0) * image_height
+                    )
+                    ymax = max(
+                        (y0 / 1000.0) * image_height, (y1 / 1000.0) * image_height
+                    )
+                    boxes.append(
+                        {
+                            "label": label.strip(),
+                            "box_2d": [xmin, ymin, xmax, ymax],
+                            "angle": angle,
+                        }
+                    )
+        return boxes
+
+    for block in re.findall(r"\{<[^}]+>\}", raw_text):
+        integers = [int(x) for x in re.findall(r"-?\d+", block)]
+        if len(integers) >= 4:
+            x0, y0, x1, y1 = integers[:4]
+            angle = integers[4] if len(integers) > 4 else 0
+            xmin = min((x0 / 100.0) * image_width, (x1 / 100.0) * image_width)
+            xmax = max((x0 / 100.0) * image_width, (x1 / 100.0) * image_width)
+            ymin = min((y0 / 100.0) * image_height, (y1 / 100.0) * image_height)
+            ymax = max((y0 / 100.0) * image_height, (y1 / 100.0) * image_height)
+            boxes.append(
+                {
+                    "label": None,
+                    "box_2d": [xmin, ymin, xmax, ymax],
+                    "angle": angle,
+                }
+            )
+    return boxes
+
 
 load_dotenv()
 geochat_url = os.getenv("geochat_url")
@@ -22,9 +75,26 @@ def vqa_tool(image_path: str, query: str) -> str:
 
 @tool
 def grounding_tool(image_path: str, query: str) -> dict:
-    """Performs text-guided region grounding on a single image to locate and outline specific objects or areas mentioned in the query."""
-    response = requests.post(f"{geochat_url}/agent", json={"query": query})
-    return response.json()
+    """Performs text-guided region grounding on church.png to locate and outline specific objects or areas mentioned in the query."""
+    response = requests.post(f"{geochat_url}/grounding", data={"text_prompt": query})
+    res_json = response.json()
+    raw_text = res_json.get("text", "")
+    print(raw_text)
+    image = Image.open("church.png").convert("RGB")
+    width, height = image.size
+    boxes = parse_bboxes(raw_text, width, height)
+
+    draw = ImageDraw.Draw(image)
+    for box in boxes:
+        ymin, xmin, ymax, xmax = box["box_2d"]
+        draw.rectangle([xmin, ymin, xmax, ymax], outline="red", width=3)
+        if box["label"]:
+            draw.text((xmin, ymin - 10), box["label"], fill="red")
+
+    output_path = "church_annotated.png"
+    image.save(output_path)
+
+    return {"boxes": boxes, "annotated_image_path": output_path}
 
 
 @tool
@@ -137,7 +207,7 @@ output = router_agent.invoke(
             "/home/moksh/Desktop/SatQuery/agent/1.png",
             "/home/moksh/Desktop/SatQuery/agent/2.png",
         ],
-        "query": "compare the 2 images and tell me what has changed",
+        "query": "locate the church",
     }
 )
 print(output)
