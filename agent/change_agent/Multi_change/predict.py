@@ -50,7 +50,7 @@ class Change_Perception(object):
 
         script_path = os.path.abspath(__file__)
         script_dir = os.path.dirname(script_path)
-        parent_dir = os.path.dirname(script_dir)
+        parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))
         print(script_dir)
         parser = argparse.ArgumentParser(description='Remote_Sensing_Image_Change_Interpretation')
 
