@@ -15,6 +15,12 @@ class GenericRuntime:
     HEADERS = []
 
     def __init__(self):
+        import sys
+        import os
+        multi_change_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))), 'Multi_change')
+        if multi_change_path not in sys.path:
+            sys.path.append(multi_change_path)
+            
         self._global_vars = copy.copy(self.GLOBAL_DICT)
         self._local_vars = copy.copy(
             self.LOCAL_DICT) if self.LOCAL_DICT else None
@@ -111,6 +117,11 @@ class Visual_Change_Process_PythonInterpreter(BaseAction):
         When the user wants to detect the changed buildings and save the changed building areas in red, "Action Input" should be as follows:
         ``python
         def solution():
+            import sys
+            import os
+            multi_change_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))), 'Multi_change')
+            if multi_change_path not in sys.path:
+                sys.path.append(multi_change_path)
             from tools import Change_Perception
             import cv2
             import numpy as np
