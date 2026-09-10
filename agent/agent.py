@@ -11,6 +11,7 @@ import requests
 
 load_dotenv()
 geochat_url = os.getenv("geochat_url")
+from change_agent.change_agent import run_model
 
 
 @tool
@@ -35,7 +36,9 @@ def captioning_tool(image_path: str, query: str) -> str:
 @tool
 def change_analysis_tool(image_path_t1: str, image_path_t2: str, query: str) -> dict:
     """Analyzes a bi-temporal image pair to detect surface changes, describe alterations over time, and answer change-based visual questions with spatial change map outputs where applicable."""
-    pass
+    # 1. Full change analysis with bounding boxes & prior land-cover:
+    analysis = run_model(image_path_t1, image_path_t2, task="analyze")
+    return analysis
 
 
 @tool
@@ -64,7 +67,7 @@ TOOL_MAP = {
 }
 
 # Initialize Groq LLM
-llm = ChatGroq(model_name="qwen/qwen3.8-27b", temperature=0.7)
+llm = ChatGroq(model_name="qwen/qwen3.8-27b", temperature=0.7, max_tokens=20)
 
 
 class RouteDecision(TypedDict):
@@ -129,6 +132,12 @@ def route_and_execute(inputs: dict) -> str:
 router_agent = RunnableLambda(route_and_execute)
 
 output = router_agent.invoke(
-    {"image_paths": ["/", "/"], "query": "draw box around the church"}
+    {
+        "image_paths": [
+            "/home/moksh/Desktop/SatQuery/agent/1.png",
+            "/home/moksh/Desktop/SatQuery/agent/2.png",
+        ],
+        "query": "compare the 2 images and tell me what has changed",
+    }
 )
 print(output)

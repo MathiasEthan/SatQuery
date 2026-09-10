@@ -2,11 +2,17 @@ import sys
 import os
 
 # Ensure the local Multi_change module can be imported
-multi_change_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Multi_change')
+multi_change_path = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "Multi_change"
+)
 if multi_change_path not in sys.path:
     sys.path.append(multi_change_path)
 
-from predict import Change_Perception
+try:
+    from predict import Change_Perception
+except ImportError:
+    from Multi_change.predict import Change_Perception
+
 
 def run_model(path_a, path_b, task):
     """
