@@ -14,6 +14,7 @@ from visualizer import process_and_visualize
 import uuid
 
 from vqa_agent import run_vqa
+from captioning_agent import run_captioning
 
 
 import re
@@ -154,9 +155,13 @@ def grounding_tool(image_path: str, query: str) -> dict:
 
 
 @tool
-def captioning_tool(image_path: str, query: str) -> str:
+def captioning_tool(image_path: str, query: str) -> dict:
     """Generates a comprehensive scene description and land-cover summary for a single remote-sensing image."""
-    pass
+    try:
+        caption = run_captioning(image_path, query)
+    except RuntimeError as e:
+        return {"analysis": str(e), "img": None}
+    return {"analysis": caption, "img": None}
 
 
 @tool
