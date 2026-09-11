@@ -13,6 +13,8 @@ from change_agent.change_agent import run_model
 from visualizer import process_and_visualize
 import uuid
 
+from vqa_agent import run_vqa
+
 
 import re
 import math
@@ -114,16 +116,11 @@ backend_url = os.getenv("backend_url")
 @tool
 def vqa_tool(image_path: str, query: str) -> dict:
     """Executes visual question answering on a single optical, multispectral, or SAR image to answer natural-language queries about land cover, objects, or features."""
-    with open(image_path, "rb") as f:
-        files = {"file": (os.path.basename(image_path), f, "image/jpeg")}
-        data = {"text_prompt": "[vqa]" + query}
-        response = requests.post(f"{geochat_url}/chat", files=files, data=data)
-    
-    if response.status_code == 200:
-        res_json = response.json()
-        return {"analysis": res_json.get("text", "No text returned"), "img": None}
-    else:
-        return {"analysis": f"Error from GeoChat: {response.status_code}", "img": None}
+    try:
+        answer = run_vqa(image_path, query)
+    except RuntimeError as e:
+        return {"analysis": str(e), "img": None}
+    return {"analysis": answer, "img": None}
 
 
 @tool
