@@ -8,10 +8,7 @@ multi_change_path = os.path.join(
 if multi_change_path not in sys.path:
     sys.path.append(multi_change_path)
 
-try:
-    from predict import Change_Perception
-except ImportError:
-    from Multi_change.predict import Change_Perception
+from predict import Change_Perception
 
 
 def run_model(path_a, path_b, task):

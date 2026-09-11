@@ -1,6 +1,4 @@
 from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.runnables import RunnableLambda
 from typing_extensions import TypedDict
 from dotenv import load_dotenv
@@ -11,6 +9,8 @@ import requests
 import requests
 from PIL import Image, ImageDraw
 import re
+from change_agent.change_agent import run_model
+from visualizer import process_and_visualize
 
 
 def parse_bboxes(raw_text: str, image_width: int, image_height: int):
@@ -62,9 +62,8 @@ def parse_bboxes(raw_text: str, image_width: int, image_height: int):
     return boxes
 
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 geochat_url = os.getenv("geochat_url")
-from change_agent.change_agent import run_model
 
 
 @tool
@@ -108,6 +107,7 @@ def change_analysis_tool(image_path_t1: str, image_path_t2: str, query: str) -> 
     """Analyzes a bi-temporal image pair to detect surface changes, describe alterations over time, and answer change-based visual questions with spatial change map outputs where applicable."""
     # 1. Full change analysis with bounding boxes & prior land-cover:
     analysis = run_model(image_path_t1, image_path_t2, task="analyze")
+    process_and_visualize(analysis, image_path_t2, image_path_t1)
     return analysis
 
 
@@ -201,13 +201,15 @@ def route_and_execute(inputs: dict) -> str:
 
 router_agent = RunnableLambda(route_and_execute)
 
-output = router_agent.invoke(
-    {
-        "image_paths": [
-            "/home/moksh/Desktop/SatQuery/agent/1.png",
-            "/home/moksh/Desktop/SatQuery/agent/2.png",
-        ],
-        "query": "locate the church",
-    }
-)
-print(output)
+
+def run_agent(query):
+    output = router_agent.invoke(
+        {
+            "image_paths": [
+                "/home/moksh/Desktop/SatQuery/agent/1.png",
+                "/home/moksh/Desktop/SatQuery/agent/2.png",
+            ],
+            "query": query,
+        }
+    )
+    return output
