@@ -1,6 +1,4 @@
 from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.runnables import RunnableLambda
 from typing_extensions import TypedDict
 from dotenv import load_dotenv
@@ -11,6 +9,7 @@ import requests
 import requests
 from PIL import Image, ImageDraw
 import re
+from change_agent.change_agent import run_model
 
 
 def parse_bboxes(raw_text: str, image_width: int, image_height: int):
@@ -64,7 +63,6 @@ def parse_bboxes(raw_text: str, image_width: int, image_height: int):
 
 load_dotenv()
 geochat_url = os.getenv("geochat_url")
-from change_agent.change_agent import run_model
 
 
 @tool
@@ -201,13 +199,15 @@ def route_and_execute(inputs: dict) -> str:
 
 router_agent = RunnableLambda(route_and_execute)
 
-output = router_agent.invoke(
-    {
-        "image_paths": [
-            "/home/moksh/Desktop/SatQuery/agent/1.png",
-            "/home/moksh/Desktop/SatQuery/agent/2.png",
-        ],
-        "query": "locate the church",
-    }
-)
-print(output)
+
+def run_agent(query):
+    output = router_agent.invoke(
+        {
+            "image_paths": [
+                "/home/moksh/Desktop/SatQuery/agent/1.png",
+                "/home/moksh/Desktop/SatQuery/agent/2.png",
+            ],
+            "query": query,
+        }
+    )
+    return output
