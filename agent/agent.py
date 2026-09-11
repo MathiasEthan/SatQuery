@@ -10,6 +10,7 @@ import requests
 from PIL import Image, ImageDraw
 import re
 from change_agent.change_agent import run_model
+from visualizer import process_and_visualize
 
 
 def parse_bboxes(raw_text: str, image_width: int, image_height: int):
@@ -106,6 +107,7 @@ def change_analysis_tool(image_path_t1: str, image_path_t2: str, query: str) -> 
     """Analyzes a bi-temporal image pair to detect surface changes, describe alterations over time, and answer change-based visual questions with spatial change map outputs where applicable."""
     # 1. Full change analysis with bounding boxes & prior land-cover:
     analysis = run_model(image_path_t1, image_path_t2, task="analyze")
+    process_and_visualize(analysis, image_path_t2, image_path_t1)
     return analysis
 
 

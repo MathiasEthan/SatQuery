@@ -1,41 +1,48 @@
 import os
+import re
 import cv2
 import numpy as np
 
-# TODO CHANGE THIS TO NON HARD CODED FOR THE CHANGE ANALYSIS
-DETECTIONS = [
-    # Roads
-    (29, 0, 90, 37, "road"),
-    (0, 37, 256, 197, "road"),
-    # Buildings
-    (0, 0, 9, 5, "building"),
-    (102, 0, 140, 9, "building"),
-    (198, 0, 240, 27, "building"),
-    (0, 21, 25, 63, "building"),
-    (188, 34, 233, 65, "building"),
-    (36, 50, 80, 95, "building"),
-    (185, 71, 227, 103, "building"),
-    (192, 118, 224, 163, "building"),
-    (86, 122, 130, 164, "building"),
-    (139, 122, 172, 164, "building"),
-    (39, 124, 73, 166, "building"),
-    (162, 208, 200, 251, "building"),
-    (208, 208, 248, 243, "building"),
-    (0, 209, 20, 253, "building"),
-    (72, 210, 110, 244, "building"),
-    (253, 211, 256, 221, "building"),
-    (116, 212, 152, 240, "building"),
-    (27, 214, 62, 248, "building"),
-]
-
-# Color palette (BGR format for OpenCV)
 COLORS = {
     "road": (0, 255, 255),  # Yellow
     "building": (0, 0, 255),  # Red
 }
 
 
-def annotate_image(image_path, detections, output_path="annotated_changes.png"):
+def parse_detections(data):
+    """
+    Parses either a JSON dict like {"response": "..."} or a raw string like:
+    '(area at (29, 0, 90, 37) turned to road), (area at (0, 0, 9, 5) turned to building)'
+
+    Returns a list of tuples: (x1, y1, x2, y2, label)
+    """
+    if isinstance(data, dict):
+        text = data.get("response", "")
+    else:
+        text = str(data)
+
+    pattern = r"at\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)\s*turned to\s*([a-zA-Z_]+)"
+    matches = re.findall(pattern, text)
+    return [
+        (int(x1), int(y1), int(x2), int(y2), label.strip().lower())
+        for x1, y1, x2, y2, label in matches
+    ]
+
+
+def annotate_image(
+    image_path, detections_or_response, output_path="annotated_changes.png"
+):
+    """
+    Annotates image with bounding boxes.
+    detections_or_response can be:
+      - a raw string / dict from the model, OR
+      - an already-parsed list of (x1, y1, x2, y2, label) tuples.
+    """
+    if isinstance(detections_or_response, (str, dict)):
+        detections = parse_detections(detections_or_response)
+    else:
+        detections = detections_or_response
+
     img = cv2.imread(image_path)
     if img is None:
         raise FileNotFoundError(f"Could not read image: {image_path}")
@@ -83,16 +90,21 @@ def annotate_image(image_path, detections, output_path="annotated_changes.png"):
 
 
 def create_side_by_side(
-    img_a_path, img_b_path, detections, output_path="comparison.png"
+    img_a_path, img_b_path, detections_or_response, output_path="comparison.png"
 ):
+    if isinstance(detections_or_response, (str, dict)):
+        detections = parse_detections(detections_or_response)
+    else:
+        detections = detections_or_response
+
     img_a = cv2.imread(img_a_path)
     img_b = cv2.imread(img_b_path)
 
     if img_a is None or img_b is None:
         print(
-            f"Warning: Could not create comparison because one of the images was not found."
+            "Warning: Could not create comparison because one of the images was not found."
         )
-        return
+        return None
 
     # Resize image A to match image B height if slightly different
     h_b, w_b = img_b.shape[:2]
@@ -130,27 +142,23 @@ def create_side_by_side(
     combined = np.hstack([panel_a, panel_b])
     cv2.imwrite(output_path, combined)
     print(f"Saved side-by-side comparison to: {output_path}")
+    return combined
 
 
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Visualize Change-Agent detections")
-    parser.add_argument(
-        "--imgA", default="1.png", help="Path to pre-phase image (optional)"
-    )
-    parser.add_argument("--imgB", default="2.png", help="Path to post-phase image")
-    parser.add_argument(
-        "--output", default="annotated_changes.png", help="Path to output image"
-    )
-    args = parser.parse_args()
-
-    # 1. Annotate post-phase image
-    if os.path.exists(args.imgB):
-        annotate_image(args.imgB, DETECTIONS, output_path=args.output)
-    else:
-        print(f"File not found: {args.imgB}")
-
-    # 2. If both pre-phase and post-phase images are present, create comparison
-    if os.path.exists(args.imgA) and os.path.exists(args.imgB):
-        create_side_by_side(args.imgA, args.imgB, DETECTIONS)
+def process_and_visualize(
+    model_output,
+    img_b_path,
+    img_a_path=None,
+    output_path="annotated_changes.png",
+):
+    """
+    Convenience wrapper: takes the model output (dict or string),
+    annotates img_b, and optionally produces a side-by-side comparison with img_a.
+    """
+    annotate_image(img_b_path, model_output, output_path=output_path)
+    if img_a_path and os.path.exists(img_a_path):
+        comp_output = os.path.splitext(output_path)[0] + "_comparison.png"
+        create_side_by_side(
+            img_a_path, img_b_path, model_output, output_path=comp_output
+        )
+    return output_path
