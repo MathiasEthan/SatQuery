@@ -61,7 +61,7 @@ def parse_bboxes(raw_text: str, image_width: int, image_height: int):
     return boxes
 
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 geochat_url = os.getenv("geochat_url")
 
 
