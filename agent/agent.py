@@ -112,9 +112,18 @@ backend_url = os.getenv("backend_url")
 
 
 @tool
-def vqa_tool(image_path: str, query: str) -> str:
+def vqa_tool(image_path: str, query: str) -> dict:
     """Executes visual question answering on a single optical, multispectral, or SAR image to answer natural-language queries about land cover, objects, or features."""
-    pass
+    with open(image_path, "rb") as f:
+        files = {"file": (os.path.basename(image_path), f, "image/jpeg")}
+        data = {"text_prompt": "[vqa]" + query}
+        response = requests.post(f"{geochat_url}/chat", files=files, data=data)
+    
+    if response.status_code == 200:
+        res_json = response.json()
+        return {"analysis": res_json.get("text", "No text returned"), "img": None}
+    else:
+        return {"analysis": f"Error from GeoChat: {response.status_code}", "img": None}
 
 
 @tool
@@ -143,7 +152,7 @@ def grounding_tool(image_path: str, query: str) -> dict:
 
     return {
         "analysis": "here are the groundings yuo requested",
-        "img": backend_url + "/outputs/" + req_id + "annotated.png",
+        "img": backend_url + "/outputs/" + req_id + "_annotated.png",
     }
 
 
@@ -163,7 +172,7 @@ def change_analysis_tool(image_path_t1: str, image_path_t2: str, query: str) -> 
     process_and_visualize(
         analysis, image_path_t2, image_path_t1, output_path=output_path
     )
-    return {"analysis": analysis, "img": backend_url + "outputs/" + output_path}
+    return {"analysis": analysis, "img": backend_url + "/outputs/" + output_path}
 
 
 @tool
@@ -204,7 +213,18 @@ router_llm = llm.with_structured_output(RouteDecision)
 
 def route_and_execute(inputs: dict) -> str:
     user_query = inputs["query"]
-    image_paths = inputs.get("image_paths", ["/"])
+    image_paths = inputs.get("image_paths", [])
+    history = inputs.get("history", [])
+
+    if history:
+        history_str = "\n".join([f"User: {h['user']}\nAgent: {h['agent']}" for h in history[-3:]])
+        rewrite_prompt = (
+            f"Conversation History:\n{history_str}\n\n"
+            f"User's follow-up question: {user_query}\n\n"
+            "Rewrite the follow-up question to be a standalone query that can be understood without the history. Do not answer the question, just rewrite it. Standalone query:"
+        )
+        user_query = llm.invoke(rewrite_prompt).content.strip()
+        print(f"-> Rewritten Query: {user_query}")
 
     prompt = (
         "Classify this user query and its inputs into exactly one category: vqa, grounding, captioning, change_analysis, cross_modal_fusion, or compatibility_check.\n"
@@ -225,6 +245,9 @@ def route_and_execute(inputs: dict) -> str:
     print(f"-> Detected Query Type: {chosen_category.upper()}")
 
     selected_tool = TOOL_MAP[chosen_category]
+
+    if len(image_paths) == 0:
+        return {"analysis": "Please upload at least one image.", "img": None}
 
     if chosen_category == "change_analysis":
         return selected_tool.invoke(
@@ -251,20 +274,23 @@ def route_and_execute(inputs: dict) -> str:
             {"image_paths": image_paths, "expected_modalities": ["optical", "sar"]}
         )
     else:
-        return selected_tool.invoke({"image_path": image_paths[1], "query": user_query})
+        # For VQA, Grounding, Captioning, use the last uploaded image if there is one
+        return selected_tool.invoke({"image_path": image_paths[-1], "query": user_query})
 
 
 router_agent = RunnableLambda(route_and_execute)
 
 
-def run_agent(query):
+def run_agent(query, image_paths=None, history=None):
+    if image_paths is None:
+        image_paths = []
+    if history is None:
+        history = []
     output = router_agent.invoke(
         {
-            "image_paths": [
-                "/home/moksh/Desktop/SatQuery/agent/1.png",
-                "/home/moksh/Desktop/SatQuery/agent/2.png",
-            ],
+            "image_paths": image_paths,
             "query": query,
+            "history": history,
         }
     )
     return output

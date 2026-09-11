@@ -260,6 +260,7 @@ class Change_Perception(object):
         mask = self.change_detection(path_A, path_B)
 
         changes = []
+        counts = {"road": 0, "building": 0}
         for obj_idx, obj_name in [(1, "road"), (2, "building")]:
             mask_cp = 0 * mask.copy()
             mask_cp[mask == obj_idx] = 255
@@ -267,6 +268,7 @@ class Change_Perception(object):
             props = measure.regionprops(lbl)
             for prop in props:
                 if prop.area > 5:
+                    counts[obj_name] += 1
                     x1, y1, x2, y2 = (
                         prop.bbox[1],
                         prop.bbox[0],
@@ -289,9 +291,28 @@ class Change_Perception(object):
                         f"({prior} at ({x1}, {y1}, {x2}, {y2}) turned to {obj_name})"
                     )
 
-        result = ", ".join(changes)
-        if not result:
-            result = "No changes detected."
+        advanced_info = ", ".join(changes)
+        if not advanced_info:
+            advanced_info = "No changes detected."
+
+        # Plain english summary
+        summary = f"The scene description changed to: '{caption.strip()}'. "
+        
+        details = []
+        if counts["road"] > 0:
+            details.append(f"{counts['road']} new road segment(s)")
+        if counts["building"] > 0:
+            details.append(f"{counts['building']} new building(s)")
+            
+        if details:
+            summary += f"Specifically, the model detected {' and '.join(details)} constructed in this area."
+        else:
+            summary += "No significant object changes (roads or buildings) were detected."
+
+        result = {
+            "summary": summary,
+            "advanced_info": advanced_info
+        }
 
         print("Detailed changes:", result)
         return result

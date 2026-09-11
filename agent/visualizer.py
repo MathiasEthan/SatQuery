@@ -17,7 +17,7 @@ def parse_detections(data):
     Returns a list of tuples: (x1, y1, x2, y2, label)
     """
     if isinstance(data, dict):
-        text = data.get("response", "")
+        text = data.get("response", "") or data.get("advanced_info", "")
     else:
         text = str(data)
 
