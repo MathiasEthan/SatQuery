@@ -5,20 +5,92 @@ from dotenv import load_dotenv
 from langchain.tools import tool
 from typing import Literal
 import os
-import requests
-import requests
-from PIL import Image, ImageDraw
+import sys
+import shutil
 import re
+import math
+import uuid
+import requests
+import pandas as pd
+from PIL import Image, ImageDraw
 from change_agent.change_agent import run_model
 from visualizer import process_and_visualize
-import uuid
-
 from vqa_agent import run_vqa
 from captioning_agent import run_captioning
 
+FUSION_MODULE_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "fusion_module"
+)
+if FUSION_MODULE_DIR not in sys.path:
+    sys.path.append(FUSION_MODULE_DIR)
 
-import re
-import math
+try:
+    from fusion_module.src.tool import analyze_land_cover, find_patches_near
+    from fusion_module.src.config import S2_DIR, DATA_ROOT, META_CSV
+except ImportError:
+    analyze_land_cover = None
+    find_patches_near = None
+    S2_DIR = None
+    DATA_ROOT = None
+    META_CSV = None
+
+
+def resolve_patch_id(candidate: str) -> str:
+    """Helper to extract or map a patch ID from a filepath, string, or S1 ID."""
+    if not candidate:
+        return ""
+    name = os.path.basename(candidate).strip()
+    name = os.path.splitext(name)[0]
+    # Remove standard band / channel suffixes
+    cleaned = re.sub(
+        r"_(rgb|B01|B02|B03|B04|B05|B06|B07|B08|B09|B11|B12|B8A|VV|VH|labels_metadata)$",
+        "",
+        name,
+        flags=re.IGNORECASE,
+    )
+    # Check for S2 patch ID pattern
+    s2_match = re.search(r"(S2[AB]_MSIL2A_[0-9A-Za-z_]+)", cleaned)
+    if s2_match:
+        matched = s2_match.group(1)
+        return re.sub(
+            r"_(rgb|B01|B02|B03|B04|B05|B06|B07|B08|B09|B11|B12|B8A)$",
+            "",
+            matched,
+            flags=re.IGNORECASE,
+        )
+    # Check for S1 patch ID pattern
+    s1_match = re.search(r"(S1[AB]_IW_GRDH_[0-9A-Za-z_]+)", cleaned)
+    if s1_match:
+        s1_id = re.sub(r"_(VV|VH)$", "", s1_match.group(1), flags=re.IGNORECASE)
+        try:
+            if META_CSV and os.path.exists(META_CSV):
+                df = pd.read_csv(META_CSV)
+                match = df[df["patch_id_s1"] == s1_id]
+                if not match.empty:
+                    return str(match.iloc[0]["patch_id"])
+        except Exception:
+            pass
+
+    # If candidate is a file on disk (e.g. uploaded .tif or GeoTIFF)
+    if candidate and os.path.exists(candidate) and candidate.lower().endswith((".tif", ".tiff")):
+        try:
+            import rasterio
+            from rasterio.warp import transform_bounds
+            with rasterio.open(candidate) as src:
+                if src.crs is not None and src.bounds is not None:
+                    bounds_4326 = transform_bounds(src.crs, "EPSG:4326", *src.bounds)
+                    center_lon = (bounds_4326[0] + bounds_4326[2]) / 2.0
+                    center_lat = (bounds_4326[1] + bounds_4326[3]) / 2.0
+                    if find_patches_near is not None:
+                        res_near = find_patches_near(center_lat, center_lon, k=1)
+                        if "matches" in res_near and len(res_near["matches"]) > 0:
+                            match = res_near["matches"][0]
+                            if match.get("approx_km", 999) < 5.0:
+                                return match["patch_id"]
+        except Exception:
+            pass
+
+    return cleaned
 
 
 def parse_bboxes(raw_text: str, image_width: int, image_height: int):
@@ -180,9 +252,125 @@ def change_analysis_tool(image_path_t1: str, image_path_t2: str, query: str) -> 
 @tool
 def cross_modal_fusion_tool(
     optical_image_path: str, sar_image_path: str, query: str
-) -> str:
+) -> dict:
     """Extracts and combines complementary structural and spectral information from a co-registered optical and SAR image pair for joint region identification."""
-    pass
+    if analyze_land_cover is None:
+        return {
+            "analysis": "Fusion module is not available. Please verify the fusion_module setup.",
+            "img": None,
+        }
+
+    # 1. Resolve patch ID from query, optical path, or SAR path
+    patch_id = ""
+    # Try finding an S2 patch ID in the query first
+    s2_query_match = re.search(r"(S2[AB]_MSIL2A_[0-9A-Za-z_]+)", query)
+    if s2_query_match:
+        patch_id = resolve_patch_id(s2_query_match.group(1))
+    elif optical_image_path:
+        patch_id = resolve_patch_id(optical_image_path)
+    elif sar_image_path:
+        patch_id = resolve_patch_id(sar_image_path)
+
+    # If not found yet, check for S1 patch ID in query
+    if not patch_id:
+        s1_query_match = re.search(r"(S1[AB]_IW_GRDH_[0-9A-Za-z_]+)", query)
+        if s1_query_match:
+            patch_id = resolve_patch_id(s1_query_match.group(1))
+
+    # If still not found, check if coordinates exist in query (lat, lon)
+    if not patch_id and find_patches_near is not None:
+        coord_match = re.search(r"(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)", query)
+        if coord_match:
+            try:
+                lat, lon = float(coord_match.group(1)), float(coord_match.group(2))
+                res_near = find_patches_near(lat, lon, k=1)
+                if "matches" in res_near and len(res_near["matches"]) > 0:
+                    patch_id = res_near["matches"][0]["patch_id"]
+            except Exception:
+                pass
+
+    if not patch_id:
+        return {
+            "analysis": (
+                "Could not identify a valid Sentinel-2 patch ID from the input images or query.\n"
+                "Please provide a patch ID (e.g., S2A_MSIL2A_20170803T094031_30_11) "
+                "or geographic coordinates (e.g., 45.909, 18.893) in your query, "
+                "or upload a patch image from the dataset."
+            ),
+            "img": None,
+        }
+
+    # 2. Run fusion model inference
+    try:
+        prediction = analyze_land_cover(patch_id, top_k=5)
+    except Exception as e:
+        return {"analysis": f"Error running fusion inference: {e}", "img": None}
+
+    if "error" in prediction:
+        return {
+            "analysis": f"Fusion tool error ({prediction.get('error')}): {prediction.get('detail', '')}. {prediction.get('hint', '')}",
+            "img": None,
+        }
+
+    # 3. Format predictions into human-readable analysis
+    s1_id = prediction.get("s1_patch_id", "Unknown")
+    lat = prediction.get("lat", "N/A")
+    lon = prediction.get("lon", "N/A")
+    labels = prediction.get("labels", [])
+    probs = prediction.get("probabilities", {})
+    modalities = ", ".join(prediction.get("modalities_used", ["s2", "s1"])).upper()
+
+    prob_lines = []
+    for rank, (cls_name, score) in enumerate(probs.items(), 1):
+        percentage = f"{score * 100:.2f}%"
+        is_top = " (Detected)" if cls_name in labels else ""
+        prob_lines.append(f"{rank}. {cls_name}: {percentage}{is_top}")
+        if rank >= 5:
+            break
+
+    classes_text = "\n".join(prob_lines)
+
+    analysis_text = (
+        f"Cross-Modal Fusion Land-Cover Analysis\n\n"
+        f"- Sentinel-2 Optical Patch: {patch_id}\n"
+        f"- Sentinel-1 SAR Patch: {s1_id}\n"
+        f"- Coordinates: Lat {lat}, Lon {lon}\n"
+        f"- Modalities Fused: {modalities} (Optical 12-band + Radar Dual-Pol VV/VH)\n\n"
+        f"Top Predicted Land Cover Classes:\n"
+        f"{classes_text}\n"
+    )
+
+    # 4. Preview image
+    img_url = None
+    tmp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    # Check for rgb preview in S2_DIR
+    rgb_src = None
+    if S2_DIR:
+        candidate_rgb = S2_DIR / patch_id / f"{patch_id}_rgb.png"
+        if candidate_rgb.exists():
+            rgb_src = candidate_rgb
+
+    if rgb_src and rgb_src.exists():
+        req_id = uuid.uuid4().hex[:8]
+        out_filename = f"{req_id}_{patch_id}_rgb.png"
+        out_dest = os.path.join(tmp_dir, out_filename)
+        shutil.copyfile(str(rgb_src), out_dest)
+        img_url = f"{backend_url}/outputs/{out_filename}"
+    elif (
+        optical_image_path
+        and os.path.exists(optical_image_path)
+        and optical_image_path.lower().endswith((".png", ".jpg", ".jpeg"))
+    ):
+        req_id = uuid.uuid4().hex[:8]
+        ext = os.path.splitext(optical_image_path)[1]
+        out_filename = f"{req_id}_{patch_id}{ext}"
+        out_dest = os.path.join(tmp_dir, out_filename)
+        shutil.copyfile(optical_image_path, out_dest)
+        img_url = f"{backend_url}/outputs/{out_filename}"
+
+    return {"analysis": analysis_text, "img": img_url}
 
 
 @tool
@@ -219,7 +407,9 @@ def route_and_execute(inputs: dict) -> str:
     history = inputs.get("history", [])
 
     if history:
-        history_str = "\n".join([f"User: {h['user']}\nAgent: {h['agent']}" for h in history[-3:]])
+        history_str = "\n".join(
+            [f"User: {h['user']}\nAgent: {h['agent']}" for h in history[-3:]]
+        )
         rewrite_prompt = (
             f"Conversation History:\n{history_str}\n\n"
             f"User's follow-up question: {user_query}\n\n"
@@ -249,6 +439,14 @@ def route_and_execute(inputs: dict) -> str:
     selected_tool = TOOL_MAP[chosen_category]
 
     if len(image_paths) == 0:
+        if chosen_category == "cross_modal_fusion":
+            return selected_tool.invoke(
+                {
+                    "optical_image_path": "",
+                    "sar_image_path": "",
+                    "query": user_query,
+                }
+            )
         return {"analysis": "Please upload at least one image.", "img": None}
 
     if chosen_category == "change_analysis":
@@ -277,7 +475,9 @@ def route_and_execute(inputs: dict) -> str:
         )
     else:
         # For VQA, Grounding, Captioning, use the last uploaded image if there is one
-        return selected_tool.invoke({"image_path": image_paths[-1], "query": user_query})
+        return selected_tool.invoke(
+            {"image_path": image_paths[-1], "query": user_query}
+        )
 
 
 router_agent = RunnableLambda(route_and_execute)
