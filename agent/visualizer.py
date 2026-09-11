@@ -83,9 +83,6 @@ def annotate_image(
             lineType=cv2.LINE_AA,
         )
 
-    # Save individual annotated image
-    cv2.imwrite(output_path, annotated)
-    print(f"Saved annotated image to: {output_path}")
     return annotated
 
 
@@ -140,7 +137,7 @@ def create_side_by_side(
     panel_b = np.vstack([banner_b, annotated_b])
 
     combined = np.hstack([panel_a, panel_b])
-    cv2.imwrite(output_path, combined)
+    cv2.imwrite("tmp/" + output_path, combined)
     print(f"Saved side-by-side comparison to: {output_path}")
     return combined
 
@@ -157,8 +154,7 @@ def process_and_visualize(
     """
     annotate_image(img_b_path, model_output, output_path=output_path)
     if img_a_path and os.path.exists(img_a_path):
-        comp_output = os.path.splitext(output_path)[0] + "_comparison.png"
         create_side_by_side(
-            img_a_path, img_b_path, model_output, output_path=comp_output
+            img_a_path, img_b_path, model_output, output_path=output_path
         )
     return output_path
